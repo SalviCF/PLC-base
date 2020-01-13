@@ -27,7 +27,7 @@ Identifier = [_a-z][_a-z0-9]*
 "*"                 { return new Symbol(sym.MUL); }                        
 "/"                 { return new Symbol(sym.DIV); }
 
-";"					{ return new Symbol(sym.SC); }
+";"			{ return new Symbol(sym.SC); }
 
 
 // TERMINALS

@@ -1,0 +1,247 @@
+import java_cup.runtime.*;
+
+action code	{:
+				/* Variables */
+				public static int varTemp = 0;
+
+				/* Methods */
+				private static String newVarTemp() {
+					return "$t" + (varTemp++);
+				}
+
+				private String genTAC(String tac){
+					String temp = newVarTemp(); 
+					PLC.out.println("\t" + temp + tac); 
+					return temp;
+				}
+
+				private LabelPair genCondition(String fexp, String sexp, String binop, Boolean swap){
+					LabelPair lp = new LabelPair(); 
+					String labels = (swap)	?	lp.getLabelFalse() + ";\n\tgoto " + lp.getLabelTrue() :
+											 	lp.getLabelTrue() + ";\n\tgoto " + lp.getLabelFalse();
+					PLC.out.println("\tif (" + fexp + binop + sexp + ") goto " + labels + ";");
+					return lp;
+				}
+
+				private String newLabel() {
+					return Yylex.newLabel();
+				}
+
+				/* Classes */
+				public static class LabelPair {
+					private String labelTrue;
+					private String labelFalse;
+
+					public LabelPair(){
+						labelTrue = Yylex.newLabel();
+						labelFalse = Yylex.newLabel();
+					}
+				
+					public String getLabelTrue() {
+						return labelTrue;
+					}
+
+					public String getLabelFalse() {
+						return labelFalse;
+					}
+
+					public void swapLabels() {
+						String aux = labelTrue;
+						labelTrue = labelFalse;
+						labelFalse = aux;
+					}
+				}
+
+			:}
+
+// TERMINALS
+
+terminal PRINT, ELSE, WHILE, DO, FOR; 
+terminal String IF;
+terminal OP, CP, OB, CB;
+terminal ADD, SUB, MUL, DIV, UMIN, SC, ASIG;
+terminal DEQ, LT, LEQ, GT, GEQ, NEQ, AND, OR, NOT;
+terminal String NUM, ID;
+
+// NON TERMINALS
+
+non terminal Object sent_list, sentence, optionalElse;
+non terminal String expr;
+non terminal LabelPair cond;
+
+// PRECEDENCES
+
+precedence left OR;
+precedence left AND;
+precedence right NOT;
+precedence left ADD, SUB;
+precedence left DIV, MUL;
+precedence right UMIN;
+precedence left ELSE;
+
+// GRAMMAR
+
+sent_list		::= sentence
+				| 	sent_list sentence	
+;
+
+sentence		::= expr:e SC	
+						{:
+							RESULT = e;
+						:}
+				| 	PRINT OP expr:e CP SC	
+						{: 
+							PLC.out.println("\tprint " + e + ";"); 
+						:}
+				|	IF:labEnd OP cond:c CP 
+						{:
+							PLC.out.println(c.getLabelTrue() + ":"); 
+						:}
+					sentence 
+						{:
+							PLC.out.println("\tgoto " + labEnd + ";"); 
+							PLC.out.println(c.getLabelFalse() + ":");
+						:}
+					optionalElse
+						{:
+							PLC.out.println(labEnd + ":"); 
+						:}
+				| 	OB sent_list CB
+				|   WHILE:labIniWhile 
+						{:
+							PLC.out.println(labIniWhile + ":");
+						:}
+					OP cond:c CP 
+						{:
+							PLC.out.println(c.getLabelTrue() + ":"); 
+						:}
+					sentence
+						{:
+							PLC.out.println("\tgoto " + labIniWhile + ";"); 
+							PLC.out.println(c.getLabelFalse() + ":");
+						:}
+				|	DO:labIniDo 
+						{:
+							PLC.out.println(labIniDo + ":");
+						:}
+					sentence WHILE OP cond:c CP SC
+						{:
+							PLC.out.println(c.getLabelTrue() + ":"); 
+							PLC.out.println("\tgoto " + labIniDo + ";"); 
+							PLC.out.println(c.getLabelFalse() + ":");
+						:}
+				|	FOR:labIniFor OP expr 
+						{:
+							PLC.out.println(labIniFor + ":");
+						:}
+					SC cond:c
+						{:
+							String labIncrFor = Yylex.newLabel();
+							PLC.out.println(labIniFor + "_" + ":");
+						:}
+					SC expr 
+						{: 
+							PLC.out.println("\tgoto " + labIniFor + ";"); 
+							PLC.out.println(c.getLabelTrue() + ":"); 
+						:}	
+					CP sentence 
+						{:
+							PLC.out.println("\tgoto " + labIniFor + "_" + ";"); 
+							PLC.out.println(c.getLabelFalse() + ":"); 
+						:}
+;
+
+optionalElse	::= ELSE sentence
+				| /*epsilon*/
+;
+
+
+expr			::= expr:e1 ADD expr:e2
+						{:
+							RESULT = genTAC(" = " + e1 + " + " + e2 + ";");
+						:}
+				|	expr:e1 SUB expr:e2
+						{:
+							RESULT = genTAC(" = " + e1 + " - " + e2 + ";");
+						:}
+				|	expr:e1 MUL expr:e2
+						{:
+							RESULT = genTAC(" = " + e1 + " * " + e2 + ";");
+						:}
+				|	expr:e1 DIV expr:e2
+						{:
+							RESULT = genTAC(" = " + e1 + " / " + e2 + ";");
+						:} 
+				|	OP expr:e CP
+						{: 
+							RESULT = e;
+						:}
+				|	SUB expr:e
+						{:
+							RESULT = genTAC(" = -" + e + ";");
+						:} %prec UMIN
+				| 	ID:id	
+						{: 
+							RESULT = id; 
+						:}
+				| 	NUM:num	
+						{: 
+							RESULT = num; 
+						:}
+				|	ID:id ASIG expr:e 
+						{:
+							PLC.out.println("\t" + id + " = " + e + ";");
+							RESULT = id;
+						:}
+;
+
+cond			::= expr:e1 DEQ expr:e2
+						{:
+							RESULT = genCondition(e1, e2, " == ", false);
+						:}
+				|	expr:e1 NEQ expr:e2
+						{:
+							RESULT = genCondition(e1, e2, " == ", true);
+						:}
+				|	expr:e1 LT expr:e2
+						{:
+							RESULT = genCondition(e1, e2, " < ", false);
+						:}
+				|	expr:e1 LEQ expr:e2
+						{:
+							RESULT = genCondition(e2, e1, " < ", true);
+						:}
+				|	expr:e1 GT expr:e2
+						{:
+							RESULT = genCondition(e2, e1, " < ", false);
+						:}
+				|	expr:e1 GEQ expr:e2
+						{:
+							RESULT = genCondition(e1, e2, " < ", true);
+						:}
+				|	cond:c1 AND
+						{: 
+							PLC.out.println(c1.getLabelTrue() + ":");
+						:}
+					cond:c2
+						{:
+							PLC.out.println(c1.getLabelFalse() + ":");
+							PLC.out.println("\tgoto " + c2.getLabelFalse() + ";");
+							RESULT = c2;
+						:}
+				|	cond:c1 OR
+						{: 
+							PLC.out.println(c1.getLabelFalse() + ":");
+						:}
+					cond:c2
+						{:
+							PLC.out.println(c1.getLabelTrue() + ":");
+							PLC.out.println("\tgoto " + c2.getLabelTrue() + ";");
+							RESULT = c2;
+						:}
+				|	NOT cond:c 
+						{:
+							c.swapLabels();
+							RESULT = c;
+						:}
+;
